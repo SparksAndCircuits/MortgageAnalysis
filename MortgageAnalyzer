@@ -1,0 +1,373 @@
+import React, { useState, useMemo } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
+import { Calculator, Home, TrendingUp, Calendar, DollarSign, Info } from 'lucide-react';
+
+const MortgageAnalyzer = () => {
+  const [selectedScenario, setSelectedScenario] = useState('current');
+  const [showDetails, setShowDetails] = useState('overview');
+  
+  // Mortgage parameters
+  const currentBalance = 408551.15;
+  const propertyValue = 600000;
+  const currentEquity = propertyValue - currentBalance;
+  const biweeklyPayment = 1364.37;
+  const annualRate = 0.0563;
+  const biweeklyRate = annualRate / 26;
+  const termEndDate = new Date('2027-06-01');
+  const today = new Date();
+  const extraMonthlyPayment = 2000;
+  const lumpSumPayment = 20000;
+  
+  // Calculate mortgage scenarios
+  const calculateAmortization = (balance, payment, extraPayment = 0, includeLumpSum = false) => {
+    let currentBalance = balance; // Balance already includes the $20K lump sum that was applied
+    const schedule = [];
+    let totalInterest = 0;
+    let paymentNumber = 0;
+    let date = new Date(today);
+    
+    // Note: lump sum already applied to current balance, so no need to subtract again
+    
+    while (currentBalance > 0.01 && paymentNumber < 1300) { // Max 50 years
+      const interestPayment = currentBalance * biweeklyRate;
+      let principalPayment = payment - interestPayment;
+      
+      // Add extra payment every 2 payments (monthly equivalent)
+      if (extraPayment > 0 && paymentNumber % 2 === 0) {
+        principalPayment += extraPayment / 2; // Split monthly extra across 2 biweekly payments
+      }
+      
+      if (principalPayment > currentBalance) {
+        principalPayment = currentBalance;
+      }
+      
+      currentBalance -= principalPayment;
+      totalInterest += interestPayment;
+      
+      if (paymentNumber % 2 === 0) { // Record every month for visualization
+        schedule.push({
+          paymentNumber: Math.floor(paymentNumber / 2),
+          date: new Date(date),
+          balance: currentBalance,
+          interestPayment: interestPayment,
+          principalPayment: principalPayment,
+          totalInterest: totalInterest,
+          equity: propertyValue - currentBalance
+        });
+      }
+      
+      paymentNumber++;
+      date.setDate(date.getDate() + 14);
+    }
+    
+    return { schedule, totalInterest, payoffDate: date, totalPayments: paymentNumber };
+  };
+  
+  // Different scenarios
+  const scenarios = useMemo(() => {
+    return {
+      current: calculateAmortization(currentBalance, biweeklyPayment, extraMonthlyPayment, false, true), // Stop extra at renewal
+      regularOnly: calculateAmortization(currentBalance, biweeklyPayment, 0, false, false),
+      doubleExtra: calculateAmortization(currentBalance, biweeklyPayment, extraMonthlyPayment * 2, false, true), // Stop extra at renewal
+      continueExtra: calculateAmortization(currentBalance, biweeklyPayment, extraMonthlyPayment, false, false), // Continue extra after renewal
+      renewalOptions: {
+        // Assuming rates could be different at renewal
+        lower: calculateAmortization(currentBalance, biweeklyPayment, extraMonthlyPayment, false, true),
+        higher: calculateAmortization(currentBalance, biweeklyPayment * 1.1, extraMonthlyPayment, false, true)
+      }
+    };
+  }, []);
+  
+  // Calculate remaining balance at term end - using correct remaining amortization
+  const balanceAtTermEnd = useMemo(() => {
+    const paymentsToTermEnd = Math.floor((termEndDate - today) / (1000 * 60 * 60 * 24 * 14)); // biweekly periods
+    
+    let balance = currentBalance; // Current balance already includes lump sum
+    for (let i = 0; i < paymentsToTermEnd && balance > 0; i++) {
+      const interest = balance * biweeklyRate;
+      let principal = biweeklyPayment - interest;
+      // Add extra payment every 2 payments (monthly)
+      if (i % 2 === 0) principal += extraMonthlyPayment / 2;
+      if (principal > balance) principal = balance;
+      balance -= principal;
+    }
+    return Math.max(0, balance);
+  }, []);
+  
+  const currentScenario = scenarios[selectedScenario];
+  
+  const formatCurrency = (amount) => `$${amount.toLocaleString('en-CA', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const formatDate = (date) => date.toLocaleDateString('en-CA', { year: 'numeric', month: 'short' });
+  
+  const summaryStats = [
+    {
+      title: "Current Equity",
+      value: formatCurrency(currentEquity),
+      subtitle: `${((currentEquity / propertyValue) * 100).toFixed(1)}% of property value`,
+      icon: <Home className="w-6 h-6" />,
+      color: "text-green-600"
+    },
+    {
+      title: "Payoff Date",
+      value: formatDate(currentScenario.payoffDate),
+      subtitle: `${Math.round((currentScenario.payoffDate - today) / (1000 * 60 * 60 * 24 * 365))} years remaining`,
+      icon: <Calendar className="w-6 h-6" />,
+      color: "text-blue-600"
+    },
+    {
+      title: "Total Interest",
+      value: formatCurrency(currentScenario.totalInterest),
+      subtitle: "With current strategy",
+      icon: <DollarSign className="w-6 h-6" />,
+      color: "text-orange-600"
+    },
+    {
+      title: "Balance at Renewal",
+      value: formatCurrency(balanceAtTermEnd),
+      subtitle: "June 2027",
+      icon: <TrendingUp className="w-6 h-6" />,
+      color: "text-purple-600"
+    }
+  ];
+  
+  const comparisonData = [
+    {
+      scenario: "Regular Payments Only",
+      totalInterest: scenarios.regularOnly.totalInterest,
+      payoffYears: Math.round((scenarios.regularOnly.payoffDate - today) / (1000 * 60 * 60 * 24 * 365)),
+      monthlyCost: biweeklyPayment * 26 / 12
+    },
+    {
+      scenario: "Current Strategy (Stop Extra in 2027)",
+      totalInterest: scenarios.current.totalInterest,
+      payoffYears: Math.round((scenarios.current.payoffDate - today) / (1000 * 60 * 60 * 24 * 365)),
+      monthlyCost: (biweeklyPayment * 26 / 12) + extraMonthlyPayment
+    },
+    {
+      scenario: "Continue Extra After 2027",
+      totalInterest: scenarios.continueExtra.totalInterest,
+      payoffYears: Math.round((scenarios.continueExtra.payoffDate - today) / (1000 * 60 * 60 * 24 * 365)),
+      monthlyCost: (biweeklyPayment * 26 / 12) + extraMonthlyPayment
+    }
+  ];
+  
+  const pieData = [
+    { name: 'Remaining Balance', value: currentBalance, color: '#ef4444' },
+    { name: 'Current Equity', value: currentEquity, color: '#22c55e' }
+  ];
+
+  return (
+    <div className="w-full max-w-7xl mx-auto p-6 bg-gray-50 min-h-screen">
+      <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h1 className="text-3xl font-bold text-gray-800 mb-2 flex items-center gap-3">
+          <Calculator className="w-8 h-8 text-blue-600" />
+          Mortgage Analysis Dashboard
+        </h1>
+        <p className="text-gray-600">Your 25-year amortization mortgage with biweekly payments</p>
+      </div>
+      
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {summaryStats.map((stat, index) => (
+          <div key={index} className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className={stat.color}>{stat.icon}</div>
+            </div>
+            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">{stat.title}</h3>
+            <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
+            <p className="text-sm text-gray-600 mt-1">{stat.subtitle}</p>
+          </div>
+        ))}
+      </div>
+      
+      {/* Current Equity Pie Chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h3 className="text-xl font-semibold mb-4">Current Home Equity Position</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={120}
+                paddingAngle={5}
+                dataKey="value"
+              >
+                {pieData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value) => formatCurrency(value)} />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h3 className="text-xl font-semibold mb-4">Key Insights</h3>
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-blue-500 mt-1" />
+              <div>
+                <p className="font-medium">Strong Equity Position</p>
+                <p className="text-sm text-gray-600">You have {((currentEquity/propertyValue)*100).toFixed(1)}% equity in your home</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-green-500 mt-1" />
+              <div>
+                <p className="font-medium">Extra Payments Until 2027</p>
+                <p className="text-sm text-gray-600">Your $2,000/month extra payments stop at renewal, but still provide significant savings</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-purple-500 mt-1" />
+              <div>
+                <p className="font-medium">Term Renewal in 2027</p>
+                <p className="text-sm text-gray-600">You'll have {formatCurrency(balanceAtTermEnd)} remaining to renew (includes your $20K lump sum impact)</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Navigation Tabs */}
+      <div className="bg-white rounded-lg shadow-md mb-6">
+        <div className="flex border-b">
+          {[
+            { id: 'balance', label: 'Balance Over Time' },
+            { id: 'payments', label: 'Payment Breakdown' },
+            { id: 'comparison', label: 'Strategy Comparison' },
+            { id: 'renewal', label: 'Renewal Analysis' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setShowDetails(tab.id)}
+              className={`px-6 py-3 font-medium ${
+                showDetails === tab.id
+                  ? 'text-blue-600 border-b-2 border-blue-600'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        
+        <div className="p-6">
+          {showDetails === 'balance' && (
+            <div>
+              <h3 className="text-xl font-semibold mb-4">Mortgage Balance & Equity Growth</h3>
+              <ResponsiveContainer width="100%" height={400}>
+                <AreaChart data={currentScenario.schedule.slice(0, 120)}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="paymentNumber" 
+                    label={{ value: 'Months', position: 'insideBottom', offset: -10 }}
+                  />
+                  <YAxis tickFormatter={(value) => `$${(value/1000).toFixed(0)}k`} />
+                  <Tooltip 
+                    formatter={(value) => formatCurrency(value)}
+                    labelFormatter={(label) => `Month ${label}`}
+                  />
+                  <Legend />
+                  <Area type="monotone" dataKey="balance" stackId="1" stroke="#ef4444" fill="#ef4444" name="Remaining Balance" />
+                  <Area type="monotone" dataKey="equity" stackId="2" stroke="#22c55e" fill="#22c55e" name="Home Equity" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          
+          {showDetails === 'payments' && (
+            <div>
+              <h3 className="text-xl font-semibold mb-4">Monthly Payment Breakdown Over Time</h3>
+              <ResponsiveContainer width="100%" height={400}>
+                <AreaChart data={currentScenario.schedule.slice(0, 120)}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="paymentNumber"
+                    label={{ value: 'Months', position: 'insideBottom', offset: -10 }}
+                  />
+                  <YAxis tickFormatter={(value) => `$${(value/1000).toFixed(1)}k`} />
+                  <Tooltip 
+                    formatter={(value) => formatCurrency(value)}
+                    labelFormatter={(label) => `Month ${label}`}
+                  />
+                  <Legend />
+                  <Area type="monotone" dataKey="interestPayment" stackId="1" stroke="#f59e0b" fill="#f59e0b" name="Interest" />
+                  <Area type="monotone" dataKey="principalPayment" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="Principal" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          
+          {showDetails === 'comparison' && (
+            <div>
+              <h3 className="text-xl font-semibold mb-4">Payment Strategy Comparison</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                {comparisonData.map((scenario, index) => (
+                  <div key={index} className="border rounded-lg p-4">
+                    <h4 className="font-semibold text-lg mb-3">{scenario.scenario}</h4>
+                    <div className="space-y-2">
+                      <p><span className="font-medium">Monthly Cost:</span> {formatCurrency(scenario.monthlyCost)}</p>
+                      <p><span className="font-medium">Total Interest:</span> {formatCurrency(scenario.totalInterest)}</p>
+                      <p><span className="font-medium">Payoff Time:</span> {scenario.payoffYears} years</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <ResponsiveContainer width="100%" height={400}>
+                <BarChart data={comparisonData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="scenario" />
+                  <YAxis tickFormatter={(value) => `$${(value/1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(value) => formatCurrency(value)} />
+                  <Bar dataKey="totalInterest" fill="#f59e0b" name="Total Interest" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          
+          {showDetails === 'renewal' && (
+            <div>
+              <h3 className="text-xl font-semibold mb-4">Renewal Analysis - June 2027</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div className="border rounded-lg p-6">
+                  <h4 className="font-semibold text-lg mb-3">At Renewal Date</h4>
+                  <div className="space-y-3">
+                    <p><span className="font-medium">Remaining Balance:</span> {formatCurrency(balanceAtTermEnd)}</p>
+                    <p><span className="font-medium">Principal Paid Down:</span> {formatCurrency(currentBalance - balanceAtTermEnd)}</p>
+                    <p><span className="font-medium">Total Home Equity:</span> {formatCurrency(propertyValue - balanceAtTermEnd)}</p>
+                    <p><span className="font-medium">Loan-to-Value Ratio:</span> {((balanceAtTermEnd/propertyValue)*100).toFixed(1)}%</p>
+                  </div>
+                </div>
+                <div className="border rounded-lg p-6">
+                  <h4 className="font-semibold text-lg mb-3">Rate Sensitivity</h4>
+                  <div className="space-y-3">
+                    <p className="text-sm text-gray-600">Impact of different renewal rates on monthly payment:</p>
+                    <p><span className="font-medium">At 4.5%:</span> ~{formatCurrency(balanceAtTermEnd * 0.045 / 12 + 200)} monthly</p>
+                    <p><span className="font-medium">At 5.63% (current):</span> ~{formatCurrency(balanceAtTermEnd * 0.0563 / 12 + 200)} monthly</p>
+                    <p><span className="font-medium">At 7.0%:</span> ~{formatCurrency(balanceAtTermEnd * 0.07 / 12 + 200)} monthly</p>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="font-semibold text-blue-800 mb-2">Renewal Strategy Tips</h4>
+                <ul className="text-sm text-blue-700 space-y-1">
+                  <li>• Start shopping for rates 120 days before renewal</li>
+                  <li>• Consider your risk tolerance for variable vs fixed rates</li>
+                  <li>• Evaluate if you want to maintain the same amortization period</li>
+                  <li>• Your strong equity position gives you negotiating power</li>
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default MortgageAnalyzer;
